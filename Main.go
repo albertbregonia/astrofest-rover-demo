@@ -11,8 +11,10 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/pion/mediadevices"
-	"github.com/pion/mediadevices/pkg/codec/openh264"
-	_ "github.com/pion/mediadevices/pkg/driver/videotest"
+
+	"github.com/pion/mediadevices/pkg/codec/mmal"
+	_ "github.com/pion/mediadevices/pkg/driver/camera" // uncomment this for actual camera
+	// _ "github.com/pion/mediadevices/pkg/driver/videotest" //comment this for actual camera
 	"github.com/pion/mediadevices/pkg/frame"
 	"github.com/pion/mediadevices/pkg/prop"
 	"github.com/pion/webrtc/v3"
@@ -54,9 +56,9 @@ func (ws *SignalingSocket) SendSignal(s Signal) {
 }
 
 func VideoSetup() {
-	// videoCodecParams, e := mmal.NewParams() //h264 video codec but optimized for the pi (videocore gpu)
+	videoCodecParams, e := mmal.NewParams() //h264 video codec but optimized for the pi (videocore gpu)
 	// videoCodecParams, e := vpx.NewVP8Params() //vp8 codec is the default webrtc codec, if mobile doesnt like mmal then swap to this (there will be a performance hit tho)
-	videoCodecParams, e := openh264.NewParams() //openh264 for windows debugging
+	// videoCodecParams, e := openh264.NewParams() //openh264 for windows debugging
 	if e != nil {
 		panic(fmt.Errorf(`failed to get codec parameters %v`, e))
 	}
