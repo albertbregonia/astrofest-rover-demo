@@ -1,0 +1,95 @@
+body{
+    display: flex;
+    justify-content: center;
+    flex-direction: column;
+    background-color: white;
+}
+
+section{
+    display: flex;
+    justify-content: center;
+}
+
+video{
+    border: black solid 3px;
+}
+
+#enable button{
+    background-color: #04AA6D;
+}
+
+.block {
+    display: block;
+    width: 200px;
+    height: 200px;
+    border: none;
+    margin-top: 30%;
+    border-radius: 50%;
+    padding: 14px 28px;
+    font-size: 16px;
+    cursor: pointer;
+    text-align: center;
+}
+
+#emergency_stop button{
+    background-color: red;
+}
+
+#enable{
+    display: flex;
+}
+
+#controls{
+    display: flex;
+    margin: 3% 0 3% 0;
+    flex-direction: row;
+    justify-content: space-evenly;
+}
+
+#joystick{
+    display: flex;
+    width: auto;
+}
+
+.col{
+    display: flex;
+    flex-direction: column;
+    height: 400px;
+    width: auto;
+}
+
+.row{
+    flex-direction: row;
+    justify-content: space-between;
+    width: fit-content;
+}
+
+img{
+    width: 80px;
+    height: 80px;
+    filter:opacity(30%);
+}
+
+img:hover{
+    filter: opacity(70%);
+}
+
+#speed{
+    display: flex;
+    flex-direction: column;
+    margin-top: 20px;
+    align-items: center;
+}
+
+#slider{
+    width: 100%;
+    height: 20px;
+}
+
+label{
+    font-size: 2rem;
+}
+
+output{
+    font-size: 2rem;
+}

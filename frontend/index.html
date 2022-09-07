@@ -4,13 +4,56 @@
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <link rel="stylesheet" href="style.css">
+    <title>MARS Rover</title>
 </head>
 <body>
-    <form id="request-sender">
+    <section id="video">
+
+    </section>
+    <section id="controls">
+        <div id="enable">
+            <button type="button" class="block" onclick="enable = true;move('C');">Enable Motors</button>
+        </div>
+        <div id="joystick">
+            <div class="col">
+                <div class="row">
+                    <img draggable="false" src="arrows/up_left_arrow.svg" onclick="move('UL')">
+                    <img draggable="false" src="arrows/up_arrow.svg" onclick="move('U')">
+                    <img draggable="false" src="arrows/up_right_arrow.svg" onclick="move('UR')">
+                </div>
+                <div class="row">
+                    <img draggable="false" src="arrows/left_arrow.svg" onclick="move('L')">
+                    <img draggable="false" src="arrows/cross.svg" onclick="move('C')">
+                    <img draggable="false" src="arrows/right_arrow.svg" onclick="move('R')">
+                </div>
+                <div class="row">
+                    <img draggable="false" src="arrows/down_left_arrow.svg" onclick="move('DL')">
+                    <img draggable="false" src="arrows/down_arrow.svg" onclick="move('D')">
+                    <img draggable="false" src="arrows/down_right_arrow.svg" onclick="move('DR')">
+                </div>
+                <div id="speed">
+                    <input type="range" id="slider" name="Speed"
+                            min="0" max="100" value="10" step="5"
+                            oninput="this.nextElementSibling.value = this.value; speed = this.value">
+                            <output>100</output>
+                    <label for="Speed">Speed</label>
+                </div>
+            </div>
+        </div>
+
+        <div id="emergency_stop">
+            <button type="button" class="block" onclick="enable = false;move('C');">Disable Motors</button>
+        </div>
+    </section>
+
+    <section id="status">
+        <h3 id="status_text"></h3>
+    </section>
+    <!-- <form id="request-sender">
         <input type="text" placeholder="Send a message to Python through WebRTC">
         <button>Submit</button>
-    </form>
+    </form> -->
     <script src="index.js"></script>
 </body>
 </html>
