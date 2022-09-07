@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os/exec"
 	"sync"
@@ -12,8 +14,9 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pion/mediadevices"
 
-	"github.com/pion/mediadevices/pkg/codec/mmal"
+	"github.com/pion/mediadevices/pkg/codec/vpx"
 	_ "github.com/pion/mediadevices/pkg/driver/camera" // uncomment this for actual camera
+
 	// _ "github.com/pion/mediadevices/pkg/driver/videotest" //comment this for actual camera
 	"github.com/pion/mediadevices/pkg/frame"
 	"github.com/pion/mediadevices/pkg/prop"
@@ -22,7 +25,7 @@ import (
 
 var (
 	api         *webrtc.API
-	botVideo    mediadevices.MediaStream //this is constant after init, therefore it is thread safe
+	botVideo    mediadevices.MediaStream //this is constant after running VideoSetup(), therefore it is thread safe
 	pythonInput io.WriteCloser
 	wsUpgrader  = websocket.Upgrader{
 		ReadBufferSize:  512,
@@ -35,8 +38,20 @@ func main() {
 	PythonGPIOSetup()
 	http.Handle(`/`, http.FileServer(http.Dir(`frontend`))) //serve frontend
 	http.HandleFunc(`/signaler`, SignalingServer)           //handle websocket requests
+	interfaces, e := net.InterfaceAddrs()
+	if e != nil {
+		panic(fmt.Errorf(`failed to read all network interfaces. reason: %v`, e))
+	}
+	for _, address := range interfaces {
+		if ip, ok := address.(*net.IPNet); ok && !ip.IP.IsLoopback() {
+			if ip.IP.To4() != nil {
+				log.Println(`Server Initialized on: https://`+ip.IP.String(), `Please enter this in the browser to view the video feed.`)
+				break
+			}
+		}
+	}
 	log.Println(`Server Initialized`)
-	log.Fatal(http.ListenAndServeTLS(`:443`, `server.crt`, `server.key`, nil)) //start server
+	panic(http.ListenAndServeTLS(`:443`, `server.crt`, `server.key`, nil)) //start server
 }
 
 type SignalingSocket struct { //thread safe websocket
@@ -56,14 +71,14 @@ func (ws *SignalingSocket) SendSignal(s Signal) {
 }
 
 func VideoSetup() {
-	videoCodecParams, e := mmal.NewParams() //h264 video codec but optimized for the pi (videocore gpu)
-	// videoCodecParams, e := vpx.NewVP8Params() //vp8 codec is the default webrtc codec, if mobile doesnt like mmal then swap to this (there will be a performance hit tho)
-	// videoCodecParams, e := openh264.NewParams() //openh264 for windows debugging
+	//videoCodecParams, e := mmal.NewParams() //h264 video codec but optimized for the pi (videocore gpu)
+	videoCodecParams, e := vpx.NewVP8Params() //vp8 codec is the default webrtc codec, if mobile doesnt like mmal then swap to this (there will be a performance hit tho)
+	//videoCodecParams, e := openh264.NewParams() //openh264 for windows debugging
 	if e != nil {
 		panic(fmt.Errorf(`failed to get codec parameters %v`, e))
 	}
-	videoCodecParams.KeyFrameInterval = 30
-	videoCodecParams.BitRate = 2_500_000 //2.5Mbps bitrate
+	videoCodecParams.KeyFrameInterval = 60
+	videoCodecParams.BitRate = 1_000_000 //1Mbps bitrate
 	mediaEngine := webrtc.MediaEngine{}
 	codecSelector := mediadevices.NewCodecSelector(mediadevices.WithVideoEncoders(&videoCodecParams))
 	codecSelector.Populate(&mediaEngine)
@@ -73,7 +88,6 @@ func VideoSetup() {
 			constraint.FrameFormat = prop.FrameFormat(frame.FormatYUY2) //YUY2 compression format
 			constraint.Width = prop.Int(640)                            //480p
 			constraint.Height = prop.Int(480)
-			constraint.FrameRate = prop.Float(60) //try to get 60fps
 		},
 		Codec: codecSelector,
 	})
@@ -84,12 +98,23 @@ func VideoSetup() {
 }
 
 func PythonGPIOSetup() {
-	py := exec.Command(`py`, `controls.py`) //'py' for windows, 'python' for unix
 	var e error
+	py := exec.Command(`python`, `controls.py`) //'py' for windows, 'python' for unix
 	pythonInput, e = py.StdinPipe()
 	if e != nil {
 		panic(fmt.Errorf(`failed to pipe STDIN for 'controls.py': %v`, e))
 	}
+	stderrPipe, e := py.StderrPipe()
+	if e != nil {
+		panic(fmt.Errorf(`failed to pipe STDERR for 'controls.py': %v`, e))
+	}
+	go func() {
+		scan := bufio.NewScanner(stderrPipe)
+		scan.Split(bufio.ScanBytes)
+		for scan.Scan() {
+			fmt.Print(scan.Text())
+		}
+	}()
 	// stdoutPipe, e := py.StdoutPipe() // if u want to be able to read STDOUT from python, this is how
 	// if e != nil {
 	// 	panic(fmt.Errorf(`failed to pipe STDOUT for 'controls.py': %v`, e))
@@ -122,7 +147,7 @@ func SignalingServer(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		if state == webrtc.PeerConnectionStateDisconnected || state == webrtc.PeerConnectionStateFailed {
+		if state == webrtc.PeerConnectionStateFailed {
 			panic(`WebRTC disconnected and/or failed`)
 		}
 	})
@@ -133,7 +158,8 @@ func SignalingServer(w http.ResponseWriter, r *http.Request) {
 			panic(fmt.Errorf(`failed to add video track to server peer: %v`, e))
 		}
 	}
-	controlChan, e := peer.CreateDataChannel(`controls`, nil) //default settings for data channel **tweak later for performance**
+	notTrue := false
+	controlChan, e := peer.CreateDataChannel(`controls`, &webrtc.DataChannelInit{Ordered: &notTrue})
 	if e != nil {
 		panic(fmt.Errorf(`failed to create control data channel for client from server: %v`, e))
 	}
@@ -181,4 +207,38 @@ func SignalingServer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+func KillMotors() {
+	/*
+			fd = open("/sys/class/gpio/gpio24/direction", O_WRONLY);
+		    if (fd == -1) {
+		        perror("Unable to open /sys/class/gpio/gpio24/direction");
+		        exit(1);
+		    }
+
+		    if (write(fd, "out", 3) != 3) {
+		        perror("Error writing to /sys/class/gpio/gpio24/direction");
+		        exit(1);
+		    }
+			relay1_pin = 11
+			relay2_pin = 13
+
+			m1_dir_pin = 16
+			m2_dir_pin = 31
+
+			m1_pwm_pin = 12
+			m2_pwm_pin = 33
+	*/
+	// var (
+	// 	relay1Pin = 11
+	// 	relay2Pin = 13
+	// 	m1DirPin  = 16
+	// 	m2DirPin  = 31
+	// 	m1PwmPin  = 12
+	// 	m2PwmPin  = 33
+	// )
+	// for _, v := range []int{relay1Pin, relay2Pin, m1DirPin, m2DirPin, m1PwmPin, m2PwmPin} {
+	// 	os.WriteFile(fmt.Sprintf(`/sys/class/gpio/gpio%v/value`, v), []byte(`0`), fs.FileMode(os.O_WRONLY))
+	// }
 }
