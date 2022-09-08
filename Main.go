@@ -31,10 +31,11 @@ var (
 		ReadBufferSize:  512,
 		WriteBufferSize: 512,
 	}
+	hasVideo bool
 )
 
 func main() {
-	VideoSetup()
+	hasVideo = VideoSetup()
 	PythonGPIOSetup()
 	http.Handle(`/`, http.FileServer(http.Dir(`frontend`))) //serve frontend
 	http.HandleFunc(`/signaler`, SignalingServer)           //handle websocket requests
@@ -70,12 +71,13 @@ func (ws *SignalingSocket) SendSignal(s Signal) {
 	ws.WriteJSON(s) //this will never fail so the error is ignored
 }
 
-func VideoSetup() {
+func VideoSetup() bool {
 	//videoCodecParams, e := mmal.NewParams() //h264 video codec but optimized for the pi (videocore gpu)
 	videoCodecParams, e := vpx.NewVP8Params() //vp8 codec is the default webrtc codec, if mobile doesnt like mmal then swap to this (there will be a performance hit tho)
 	//videoCodecParams, e := openh264.NewParams() //openh264 for windows debugging
 	if e != nil {
-		panic(fmt.Errorf(`failed to get codec parameters %v`, e))
+		log.Println(fmt.Errorf(`Failed to get codec parameters %v`, e))
+		return false
 	}
 	videoCodecParams.KeyFrameInterval = 60
 	videoCodecParams.BitRate = 1_000_000 //1Mbps bitrate
@@ -92,9 +94,11 @@ func VideoSetup() {
 		Codec: codecSelector,
 	})
 	if e != nil {
-		panic(fmt.Errorf(`failed to find camera with valid parameters: %v`, e))
+		log.Println(fmt.Errorf(`Failed to find camera with valid parameters: %v`, e))
+		return false
 	}
-	log.Println(`Sucessfully initialized camera`)
+	log.Println(`Successfully initialized camera`)
+	return true
 }
 
 func PythonGPIOSetup() {
@@ -102,27 +106,27 @@ func PythonGPIOSetup() {
 	py := exec.Command(`python`, `controls.py`) //'py' for windows, 'python' for unix
 	pythonInput, e = py.StdinPipe()
 	if e != nil {
-		panic(fmt.Errorf(`failed to pipe STDIN for 'controls.py': %v`, e))
+		panic(fmt.Errorf(`Failed to pipe STDIN for 'controls.py': %v`, e))
 	}
 	stderrPipe, e := py.StderrPipe()
 	if e != nil {
-		panic(fmt.Errorf(`failed to pipe STDERR for 'controls.py': %v`, e))
+		panic(fmt.Errorf(`Failed to pipe STDERR for 'controls.py': %v`, e))
 	}
-	go func() {
-		scan := bufio.NewScanner(stderrPipe)
-		scan.Split(bufio.ScanBytes)
-		for scan.Scan() {
-			fmt.Print(scan.Text())
-		}
-	}()
+	// go func() {
+	// 	scan := bufio.NewScanner(stderrPipe)
+	// 	scan.Split(bufio.ScanBytes)
+	// 	for scan.Scan() {
+	// 		fmt.Print(scan.Text())
+	// 	}
+	// }()
 	// stdoutPipe, e := py.StdoutPipe() // if u want to be able to read STDOUT from python, this is how
 	// if e != nil {
 	// 	panic(fmt.Errorf(`failed to pipe STDOUT for 'controls.py': %v`, e))
 	// }
 	if e := py.Start(); e != nil {
-		panic(fmt.Errorf(`failed to start 'controls.py': %v`, e))
+		panic(fmt.Errorf(`Failed to start 'controls.py': %v`, e))
 	}
-	log.Println(`Sucessfully initialized Python controls script`)
+	log.Println(`Successfully initialized Python controls script`)
 }
 
 func SignalingServer(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +140,7 @@ func SignalingServer(w http.ResponseWriter, r *http.Request) {
 
 	peer, e := api.NewPeerConnection(webrtc.Configuration{}) //create a webrtc instance, i dont specify ICE servers bc this is on LAN
 	if e != nil {
-		panic(fmt.Errorf(`failed to create WebRTC peer connection: %v`, e))
+		panic(fmt.Errorf(`Failed to create WebRTC peer connection: %v`, e))
 	}
 	defer peer.Close()
 
@@ -146,53 +150,58 @@ func SignalingServer(w http.ResponseWriter, r *http.Request) {
 			signaler.SendSignal(Signal{Event: `ice`, Data: string(bin)})
 		}
 	})
+
 	peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		if state == webrtc.PeerConnectionStateFailed {
 			panic(`WebRTC disconnected and/or failed`)
 		}
 	})
 
-	for _, track := range botVideo.GetVideoTracks() { //add video track to webrtc peer instance
-		if _, e := peer.AddTransceiverFromTrack(track,
-			webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly}); e != nil {
-			panic(fmt.Errorf(`failed to add video track to server peer: %v`, e))
+	if hasVideo {
+		for _, track := range botVideo.GetVideoTracks() { //add video track to webrtc peer instance
+			if _, e := peer.AddTransceiverFromTrack(track,
+				webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly}); e != nil {
+				panic(fmt.Errorf(`Failed to add video track to server peer: %v`, e))
+			}
 		}
 	}
 	notTrue := false
 	controlChan, e := peer.CreateDataChannel(`controls`, &webrtc.DataChannelInit{Ordered: &notTrue})
 	if e != nil {
-		panic(fmt.Errorf(`failed to create control data channel for client from server: %v`, e))
+		panic(fmt.Errorf(`Failed to create control data channel for client from server: %v`, e))
 	}
 	controlChan.OnMessage(func(msg webrtc.DataChannelMessage) {
 		if msg.IsString { //whenever we receive a message from webrtc, pass it to python
 			if _, e := pythonInput.Write(append(msg.Data, '\n')); e != nil {
-				log.Fatal(fmt.Errorf(`failed to pass input from WebRTC to 'controls.py': %v`, e)) //fatal, if python doesnt work then the whole system is gone
+				log.Fatal(fmt.Errorf(`Failed to pass input from WebRTC to 'controls.py': %v`, e)) //fatal, if python doesnt work then the whole system is gone
 			}
 		}
 	})
 
 	offer, e := peer.CreateOffer(nil) //send out offer to peer to watch video and send control signals
 	if e != nil {
-		panic(fmt.Errorf(`failed to create offer for the server: %v`, e))
+		panic(fmt.Errorf(`Failed to create offer for the server: %v`, e))
 	}
+
 	if e := peer.SetLocalDescription(offer); e != nil {
-		panic(fmt.Errorf(`failed to set local description for server peer: %v`, e))
+		panic(fmt.Errorf(`Failed to set local description for server peer: %v`, e))
 	}
+
 	bin, _ := json.Marshal(offer)
 	signaler.SendSignal(Signal{Event: `offer`, Data: string(bin)}) //send the initial offer
 	signal := Signal{}
 	for {
 		if e := signaler.ReadJSON(&signal); e != nil {
-			panic(fmt.Errorf(`failed to parse JSON from server: %v`, e))
+			panic(fmt.Errorf(`Failed to parse JSON from server: %v`, e))
 		}
 		switch signal.Event {
 		case `ice`:
 			ice := webrtc.ICECandidateInit{}
 			if e := json.Unmarshal([]byte(signal.Data), &ice); e != nil {
-				panic(fmt.Errorf(`failed to parse JSON ICE candidate from server: %v`, e))
+				panic(fmt.Errorf(`Failed to parse JSON ICE candidate from server: %v`, e))
 			}
 			if e := peer.AddICECandidate(ice); e != nil {
-				panic(fmt.Errorf(`failed to add ICE candidate from server: %v`, e))
+				panic(fmt.Errorf(`Failed to add ICE candidate from server: %v`, e))
 			}
 			if peer.ConnectionState() == webrtc.PeerConnectionStateConnected {
 				log.Println(`Successfully streaming camera feed to client`)
@@ -200,10 +209,10 @@ func SignalingServer(w http.ResponseWriter, r *http.Request) {
 		case `answer`:
 			answer := webrtc.SessionDescription{}
 			if e := json.Unmarshal([]byte(signal.Data), &answer); e != nil {
-				panic(fmt.Errorf(`failed to parse JSON answer from server: %v`, e))
+				panic(fmt.Errorf(`Failed to parse JSON answer from server: %v`, e))
 			}
 			if e := peer.SetRemoteDescription(answer); e != nil {
-				panic(fmt.Errorf(`failed to set remote description for server peer: %v`, e))
+				panic(fmt.Errorf(`Failed to set remote description for server peer: %v`, e))
 			}
 		}
 	}
